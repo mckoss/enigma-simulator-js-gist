@@ -2,11 +2,21 @@
 
    Enigma machine simulation.
    
-   Rotor settings from http://homepages.tesco.net/~andycarlson/enigma/simulating_enigma.html
+   Copyright (c) 2009, Mike Koss
    
-   TODO
-   	- Ring Settings - notch moves relative to wires
-   	- Plugboard
+   See Paper Enigma at:
+   	http://mckoss.com/Crypto/Enigma.htm
+   	
+   Usage:
+   
+      var enigma = global_namespace.Import('startpad.enigma');
+      var machine = new enigma.Enigma();
+      var cipher = machine.Encode("plain text");
+      machine.Init();
+      var plain = machine.Encode(cipher);  -> "PLAIN TEXT"
+   
+   Rotor settings from:
+   	http://homepages.tesco.net/~andycarlson/enigma/simulating_enigma.html
 */
 global_namespace.Define('startpad.enigma', function (NS)
 {
@@ -22,7 +32,9 @@ NS.mReflectors = {
 	B: {wires: "YRUHQSLDPXNGOKMIEBFZCWVJAT"},
 	C: {wires: "FVPJIAOYEDRZXWGCTKUQSBNMHL"},
 	};
-	
+
+NS.fnTrace = undefined;
+
 var codeA = 'A'.charCodeAt(0);
 
 function IFromCh(ch)
@@ -45,8 +57,8 @@ function MapRotor(rotor)
 	for (var iFrom = 0; iFrom < 26; iFrom++)
 		{
 		var iTo = IFromCh(rotor.wires.charAt(iFrom));
-		rotor.mapRev[iFrom] = (26 + iTo - iFrom) % 26;
-		rotor.map[iTo] = (26 + iFrom - iTo) % 26;
+		rotor.map[iFrom] = (26 + iTo - iFrom) % 26;
+		rotor.mapRev[iTo] = (26 + iFrom - iTo) % 26;
 		}
 }
 
@@ -57,53 +69,121 @@ for (var sRotor in NS.mRotors)
 for (var sReflector in NS.mReflectors)
 	MapRotor(NS.mReflectors[sReflector]);
 
-NS.Enigma = function(rotors, reflector, settings)
+NS.Enigma = function(settings)
 {
-	if (rotors == undefined)
-		rotors = ['I', 'II', 'III'];
-	if (reflector == undefined)
-		reflector = 'B';
-	if (settings == undefined)
-		settings = {
-			rotors: ['M', 'C', 'K'],
-			rings: ['A', 'A', 'A'],
-			plugboard: []
-			};
-	
-	this.rotors = [];
-	for (var i in rotors)
-			this.rotors[i] = NS.mRotors[rotors[i]];
-	this.reflector = NS.mReflectors[reflector];
-	this.settings = settings;
+	this.fnTrace = NS.fnTrace;
+	this.settings = {
+		rotors: ['I', 'II', 'III'],
+		reflector: 'B',
+		position: ['M', 'C', 'K'],
+		rings: ['A', 'A', 'A'],
+		plugs: ""
+		};
+	NS.Extend(this.settings, settings);
 	this.Init();
 };
 
 NS.Extend(NS.Enigma.prototype, {
-Init: function(aRotors)
+Init: function(settings)
 	{
-	this.position = [];
-	if (aRotors != undefined)
-		this.settings.rotors = aRotors;
+	NS.Extend(this.settings, settings);
+	
+	this.rotors = [];
+	for (var i in this.settings.rotors)
+			this.rotors[i] = NS.mRotors[this.settings.rotors[i]];
 
+	this.reflector = NS.mReflectors[this.settings.reflector];
+
+	// Position is for the position of the out Rings (i.e. the visible
+	// marking on the code wheel.
+	this.position = [];
 	for (var i in this.settings.rotors)
 		{
-		this.position[i] = (IFromCh(this.settings.rotors[i])) +
-			IFromCh(this.settings.rings[i]) % 26;
+		this.position[i] = (IFromCh(this.settings.position[i]));
 		}
+	
+	this.rings = [];
+	for (var i in this.settings.rings)
+		{
+		this.rings[i] = IFromCh(this.settings.rings[i]);
+		}
+	
+	this.settings.plugs = this.settings.plugs.toUpperCase();
+	this.settings.plugs = this.settings.plugs.replace(/[^A-Z]/g, '');
+	
+	if (this.settings.plugs.length % 2 == 1)
+		console.warn("Invalid plugboard settings - must have an even number of characters.");
+	
+	this.mPlugs = {};
+	for (var i = 0; i < 26; i++)
+		this.mPlugs[i] = i;
+
+	for (var i = 0; i < this.settings.plugs.length; i += 2)
+		{
+		var iFrom = IFromCh(this.settings.plugs[i]);
+		var iTo = IFromCh(this.settings.plugs[i+1]);
+	
+		if (this.mPlugs[iFrom] != iFrom)
+			console.warn("Redefinition of plug setting for " + ChFromI(iFrom));
+		if (this.mPlugs[iTo] != iTo)
+			console.warn("Redefinition of plug setting for " + ChFromI(iTo));
+			
+		this.mPlugs[iFrom] = iTo;
+		this.mPlugs[iTo] = iFrom;
+		}
+	
+	if (this.fnTrace)
+		this.fnTrace("Init: " + this.toString())
 	},
 
-// Return machine state	
+/* Return machine state	as a string
+ * 
+ * Format: "Enigma Rotors: I-II-III Position: ABC <Rings:AAA> <Plugboard: AB CD>"
+ * 
+ * Rings settings of AAA not displayed.
+ * Null plugboard not displayed.
+ */
 toString: function()
 	{
 	var s = "";
 	
-	for (var i in this.settings.rotors)
+	s += "Enigma Rotors: ";
+	s += this.settings.rotors.join("-");
+	
+	s += " Position: ";
+	for (var i in this.position)
 		s += ChFromI(this.position[i]);
+	
+	var sT = "Rings: ";
+	for (var i in this.rings)
+		sT += ChFromI(this.rings[i]);
+	if (sT != "Rings: AAA")
+		s += " " + sT;
+	
+	var sT = "Plugboard: "
+	var chSep = "";
+	for (var i = 0; i < 26; i++)
+		{
+		if (i < this.mPlugs[i])
+			{
+			sT += chSep + ChFromI(i) + ChFromI(this.mPlugs[i]);
+			chSep = " ";
+			}
+		}
+	if (sT != "Plugboard: ")
+		s += " " + sT;
+
 	return s;
 	},
 	
 IncrementRotors: function()
 	{
+	/* Note that notches are components of the outer rings.  So wheel
+	 * motion is tied to the visible rotor position (letter or number)
+	 * NOT the wiring position - which is dictated by the rings settings
+	 * (or offset from the 'A' position).
+	 */
+	
 	// Middle notch - all rotors rotate
 	if (this.position[1] == IFromCh(this.rotors[1].notch))
 		{
@@ -122,31 +202,57 @@ IncrementRotors: function()
 	
 EncodeCh: function(ch)
 	{
+	var aTrace = [];
+	var i;
+	
 	ch = ch.toUpperCase();
 	
 	// Short circuit non alphabetics
 	if (ch < 'A' || ch > 'Z')
 		return ch;
 		
-	var i = IFromCh(ch);
-	
 	this.IncrementRotors();
+	
+	i = IFromCh(ch);
+	aTrace.push(i);
+	i = this.mPlugs[i];
+	aTrace.push(i);
 
 	for (var r = 2; r >= 0; r--)
 		{
-		var d = this.rotors[r].mapRev[(i + this.position[r]) % 26];
+		var d = this.rotors[r].map[(26 + i + this.position[r] - this.rings[r]) % 26];
 		i = (i + d) % 26;
+		aTrace.push(i);
 		}
 		
 	i = (i + this.reflector.map[i]) % 26;
+	aTrace.push(i);
 	
 	for (var r = 0; r < 3; r++)
 		{
-		var d = this.rotors[r].map[(i + this.position[r]) % 26];
+		var d = this.rotors[r].mapRev[(26 + i + this.position[r] - this.rings[r]) % 26];
 		i = (i + d) % 26;
+		aTrace.push(i);
 		}
 		
-	return ChFromI(i);
+	i = this.mPlugs[i];
+	aTrace.push(i);
+
+	var chOut = ChFromI(i);
+	
+	if (this.fnTrace)
+		{
+		var s = "";
+		var chSep = "";
+		for (var i in aTrace)
+			{
+			s += chSep + ChFromI(aTrace[i]);
+			chSep = "->";
+			}
+		this.fnTrace(s + " " + this.toString());
+		}
+
+	return chOut;
 	},
 	
 Encode: function(s)
